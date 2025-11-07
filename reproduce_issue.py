@@ -1,8 +1,6 @@
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
-import tempfile
-import os
 
 # Create a simple dataset
 x_train = np.random.randn(1000, 10)
@@ -14,51 +12,34 @@ model = keras.Sequential([
     keras.layers.Dense(1)
 ])
 
-# Use a very high learning rate to intentionally cause NaN
+# Use a normal learning rate initially
 model.compile(
-    optimizer=keras.optimizers.SGD(learning_rate=1e10),  # Extremely high LR
+    optimizer=keras.optimizers.SGD(learning_rate=0.01),
     loss='mse'
 )
 
-# Create a temporary directory for BackupAndRestore
-backup_dir = tempfile.mkdtemp()
-print(f"Backup directory: {backup_dir}")
+# Callback to increase learning rate after first epoch
+class IncreaseLR(keras.callbacks.Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        if epoch == 0:
+            print("\nIncreasing learning rate to cause NaN...")
+            self.model.optimizer.learning_rate.assign(1e100)
 
 # Set up callbacks
-backup_callback = keras.callbacks.BackupAndRestore(backup_dir=backup_dir)
+backup_callback = keras.callbacks.BackupAndRestore(backup_dir='./backup')
+increase_lr_callback = IncreaseLR()
 terminate_callback = keras.callbacks.TerminateOnNaN()
 
-# Train the model (will hit NaN very quickly)
-print("\nStarting training...")
-try:
-    history = model.fit(
-        x_train, y_train,
-        epochs=10,
-        batch_size=32,
-        callbacks=[backup_callback, terminate_callback],
-        verbose=1
-    )
-    print("\nTraining completed normally")
-except Exception as e:
-    print(f"\nTraining stopped with exception: {e}")
+# Train the model
+print("Starting training with standard TerminateOnNaN...")
+print("Will complete epoch 0, create backup, then hit NaN in epoch 1...")
+model.fit(
+    x_train, y_train,
+    epochs=10,
+    batch_size=32,
+    callbacks=[backup_callback, increase_lr_callback, terminate_callback],
+    verbose=1
+)
 
-# Check if backup directory still exists
-print(f"\nBackup directory exists: {os.path.exists(backup_dir)}")
-if os.path.exists(backup_dir):
-    print(f"Contents: {os.listdir(backup_dir)}")
-else:
-    print("Backup directory was deleted - cannot restore from last good epoch!")
-
-# Cleanup
-if os.path.exists(backup_dir):
-    import shutil
-    shutil.rmtree(backup_dir)
-
-# **Expected behaviour:**
-# When NaN is detected, the backup directory should remain so you can restore from the last good epoch.
-
-# **Actual behaviour:**
-# The backup directory is deleted because `on_train_end()` is called, printing:
-
-# Backup directory exists: False
-# Backup directory was deleted - cannot restore from last good epoch!
+print("\nTraining ended. Check if ./backup directory still exists.")
+print("Expected: backup directory is deleted (this is the problem)")
